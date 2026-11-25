@@ -1,6 +1,6 @@
 import { AbsoluteFill, interpolate, useCurrentFrame, spring, useVideoConfig } from "remotion";
 
-export const Hook = ({ text }: { text: string }) => {
+export const Hook = ({ text, subtext }: { text: string; subtext: string }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const scale = spring({ frame, fps, config: { damping: 100, stiffness: 200 } });
@@ -11,8 +11,8 @@ export const Hook = ({ text }: { text: string }) => {
       <div style={{ fontSize: 72, fontWeight: 900, color: "#FFD700", textAlign: "center", transform: `scale(${scale})`, opacity, textShadow: "0 0 20px black", lineHeight: 1.1 }}>
         {text}
       </div>
-      <div style={{ fontSize: 32, color: "white", marginTop: 20, backgroundColor: "#FF0000", padding: "8px 20px", borderRadius: 20, fontWeight: 700 }}>
-        STOP SCROLLING 👇
+      <div style={{ fontSize: 32, color: "white", marginTop: 20, backgroundColor: "#FF0000", padding: "8px 20px", borderRadius: 20, fontWeight: 700, textAlign: "center" }}>
+        {subtext}
       </div>
     </AbsoluteFill>
   );
