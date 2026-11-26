@@ -1,20 +1,29 @@
 import React from "react";
-import { AbsoluteFill, useCurrentFrame } from "remotion";
-import { Background } from "./Background";
+import { AbsoluteFill, Video, Sequence } from "remotion";
+import { Main } from "./Main";
+import { Hook } from "./Hook";
+import { Title } from "./Title";
+import { CTA } from "./CTA";
 import { Captions } from "./Captions";
+import { Background } from "./Background";
 
-export const MainVideo: React.FC<{ script: string }> = ({ script }) => {
-  const frame = useCurrentFrame();
-
-  const words = script.split(" ");
-  const wordsPerSecond = 2;
-  const currentWordIndex = Math.floor(frame / 30 * wordsPerSecond);
-  const visibleWords = words.slice(0, currentWordIndex + 1).join(" ");
-
+export const MainVideo = () => {
   return (
     <AbsoluteFill>
       <Background />
-      <Captions text={visibleWords || words[0]} />
+      <Video src={Main.videoUrl} />
+      <Sequence name="Hook">
+        <Hook text={Main.hook} />
+      </Sequence>
+      <Sequence name="Title">
+        <Title text={Main.title} />
+      </Sequence>
+      <Sequence name="Captions">
+        <Captions />
+      </Sequence>
+      <Sequence name="CTA">
+        <CTA text={Main.cta} />
+      </Sequence>
     </AbsoluteFill>
   );
 };
