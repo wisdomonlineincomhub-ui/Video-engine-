@@ -13,16 +13,16 @@ export const MainVideo = () => {
       <Background />
       <Video src={Main.videoUrl} />
       <Sequence name="Hook">
-        <Hook text={Main.hook} />
+        <Hook text={Main.hook} subtext={Main.hookSub} />
       </Sequence>
       <Sequence name="Title">
-        <Title text={Main.title} />
+        <Title title={Main.title} />
       </Sequence>
       <Sequence name="Captions">
         <Captions />
       </Sequence>
       <Sequence name="CTA">
-        <CTA text={Main.cta} />
+        <CTA text={Main.cta} subtext={Main.ctaSub} />
       </Sequence>
     </AbsoluteFill>
   );
