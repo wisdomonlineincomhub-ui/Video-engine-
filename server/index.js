@@ -1,6 +1,3 @@
-
-
-```javascript
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
@@ -17,7 +14,6 @@ const OUTPUT_DIR = path.join(__dirname, "..", "public", "videos");
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 app.use("/videos", express.static(OUTPUT_DIR));
 
-// In-memory job store
 const jobs = {};
 
 let bundleLocation = null;
@@ -57,7 +53,6 @@ async function doRenderMain(jobId, body, baseUrl) {
   }
 }
 
-// Start render -> returns jobId immediately (no timeout)
 app.post("/render-main", (req, res) => {
   const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   const baseUrl = req.protocol + "://" + req.get("host");
@@ -67,8 +62,6 @@ app.post("/render-main", (req, res) => {
     jobs[jobId] = { status: "error", error: e.message };
   });
 });
-
-// Check job status
 app.get("/job/:id", (req, res) => {
   const job = jobs[req.params.id];
   if (!job) return res.status(404).json({ error: "Job not found" });
@@ -78,4 +71,3 @@ app.get("/job/:id", (req, res) => {
 app.get("/health", (req, res) => res.json({ ok: true, service: "video-engine" }));
 
 app.listen(PORT, () => console.log(`Video engine running on port ${PORT}`));
-```
