@@ -1,13 +1,21 @@
 services:
-  - type: web
+    - type: web
     name: video-engine
     runtime: docker
     plan: free
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
     envVars:
-      - key: PORT
+            - key: PORT
         value: 3000
-      - key: NODE_ENV
+            - key: NODE_ENV
         value: production
+            - key: R2_ACCOUNT_ID
+        sync: false
+            - key: R2_ACCESS_KEY_ID
+        sync: false
+            - key: R2_SECRET_ACCESS_KEY
+        sync: false
+            - key: R2_BUCKET
+        value: Video 
     autoDeploy: true
