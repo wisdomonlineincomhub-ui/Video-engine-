@@ -205,6 +205,44 @@ success: false,
 });
 
 app.use((_req, res) => {
+app.get("/r2-test", async (_req, res) => {
+  const env = {
+    R2_ACCOUNT_ID: process.env.R2_ACCOUNT_ID
+      ? `${process.env.R2_ACCOUNT_ID.length} chars (expect 32)`
+      : "MISSING",
+    R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID
+      ? `${process.env.R2_ACCESS_KEY_ID.length} chars (expect 32)`
+      : "MISSING",
+    R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY
+      ? `${process.env.R2_SECRET_ACCESS_KEY.length} chars (expect 64)`
+      : "MISSING",
+    R2_BUCKET: process.env.R2_BUCKET || "lion-prime-video",
+  };
+
+  try {
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: BUCKET,
+        Key: "_healthcheck/probe.txt",
+        Body: "probe " + new Date().toISOString(),
+        ContentType: "text/plain",
+      }),
+    );
+    return res.json({ success: true, message: "R2 write OK", env });
+  } catch (e) {
+    return res.status(500).json({
+      success: false,
+      error: {
+        name: e.name,
+        code: e.Code || e.code,
+        message: e.message,
+        httpStatus: e.$metadata && e.$metadata.httpStatusCode,
+        requestId: e.$metadata && e.$metadata.requestId,
+      },
+      env,
+    });
+  }
+});
   res.status(404).json({ success: false, error: "not found" });
 });
 
