@@ -39,8 +39,7 @@ function esc(text) {
 
 function runFfmpeg(input, output, o) {
   const filters = [
-    
-const filters = [ "scale=720:1280:force_original_aspect_ratio=increase",
+    "scale=720:1280:force_original_aspect_ratio=increase",
     "crop=720:1280",
   ];
   const overlay = (text, size, y, opacity) => {
