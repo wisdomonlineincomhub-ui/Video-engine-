@@ -60,7 +60,8 @@ function runFfmpeg(input, output, o) {
   overlay(o.ctaSub, 38, "h*0.78+82", 0.45);
 
   const seconds = Math.max(1, Math.min(60, Number(o.duration) || 10));
-const args = [
+
+  const args = [
     "-y",
     "-i", input,
     "-vf", filters.join(","),
@@ -119,7 +120,8 @@ async function renderJob(job) {
   try {
     await download(job.videoUrl, input);
     await runFfmpeg(input, output, job);
-const key = `renders/${job.jobId}.mp4`;
+
+    const key = `renders/${job.jobId}.mp4`;
     await upload(output, key);
 
     const stat = await fsp.stat(output);
@@ -139,7 +141,7 @@ app.get("/", (_req, res) => {
   res.json({
     service: "video-engine",
     status: "ok",
-    routes: ["GET /health", "POST /render-main"],
+    routes: ["GET /health", "GET /r2-test", "POST /render-main"],
   });
 });
 
@@ -187,7 +189,7 @@ app.post("/render-main", async (req, res) => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             jobId: job.jobId,
-success: false,
+            success: false,
             error: String(e.message || e),
           }),
         }).catch(() => {});
@@ -204,7 +206,8 @@ success: false,
   }
 });
 
-app.use((_req, res) => {
+// ------------------------------------------------------- R2 credential probe
+
 app.get("/r2-test", async (_req, res) => {
   const env = {
     R2_ACCOUNT_ID: process.env.R2_ACCOUNT_ID
@@ -243,6 +246,10 @@ app.get("/r2-test", async (_req, res) => {
     });
   }
 });
+
+// ------------------------------------------------------------------- 404
+
+app.use((_req, res) => {
   res.status(404).json({ success: false, error: "not found" });
 });
 
