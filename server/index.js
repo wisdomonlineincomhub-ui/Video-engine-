@@ -42,6 +42,7 @@ function runFfmpeg(input, output, o) {
     "scale=720:1280:force_original_aspect_ratio=increase",
     "crop=720:1280",
   ];
+
   const overlay = (text, size, y, opacity) => {
     if (!text) return;
     filters.push(
@@ -51,21 +52,22 @@ function runFfmpeg(input, output, o) {
         `:x=(w-text_w)/2:y=${y}`,
     );
   };
-overlay(o.hook, 64, "h*0.12", 0.55);
+
+  overlay(o.hook, 64, "h*0.12", 0.55);
   overlay(o.hookSub, 40, "h*0.12+92", 0.45);
   overlay(o.title, 52, "h*0.45", 0.55);
   overlay(o.cta, 56, "h*0.78", 0.6);
   overlay(o.ctaSub, 38, "h*0.78+82", 0.45);
 
   const seconds = Math.max(1, Math.min(60, Number(o.duration) || 10));
-
-  const args = [
+const args = [
     "-y",
     "-i", input,
     "-vf", filters.join(","),
     "-t", String(seconds),
     "-c:v", "libx264",
-    "-preset", "veryfast",
+    "-preset", "ultrafast",
+    "-threads", "1",
     "-crf", "23",
     "-pix_fmt", "yuv420p",
     "-c:a", "aac",
@@ -108,6 +110,7 @@ async function upload(file, key) {
     }),
   );
 }
+
 async function renderJob(job) {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "render-"));
   const input = path.join(dir, "in.mp4");
@@ -116,8 +119,7 @@ async function renderJob(job) {
   try {
     await download(job.videoUrl, input);
     await runFfmpeg(input, output, job);
-
-    const key = `renders/${job.jobId}.mp4`;
+const key = `renders/${job.jobId}.mp4`;
     await upload(output, key);
 
     const stat = await fsp.stat(output);
@@ -146,7 +148,6 @@ app.get("/health", (_req, res) => {
 });
 
 app.post("/render-main", async (req, res) => {
-  // Optional shared-secret guard. Off unless RENDER_SHARED_SECRET is set.
   if (process.env.RENDER_SHARED_SECRET) {
     if (req.get("x-render-key") !== process.env.RENDER_SHARED_SECRET) {
       return res.status(401).json({ success: false, error: "unauthorized" });
@@ -169,7 +170,6 @@ app.post("/render-main", async (req, res) => {
     ctaSub: body.ctaSub || "",
   };
 
-  // Async mode: reply immediately, POST the result to callbackUrl when done.
   if (body.callbackUrl) {
     res.status(202).json({ success: true, accepted: true, jobId: job.jobId });
 
@@ -187,7 +187,7 @@ app.post("/render-main", async (req, res) => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             jobId: job.jobId,
-            success: false,
+success: false,
             error: String(e.message || e),
           }),
         }).catch(() => {});
@@ -196,7 +196,6 @@ app.post("/render-main", async (req, res) => {
     return;
   }
 
-  // Sync mode: block until the render finishes.
   try {
     const result = await renderJob(job);
     res.json({ success: true, jobId: job.jobId, ...result });
@@ -212,4 +211,3 @@ app.use((_req, res) => {
 app.listen(PORT, () => {
   console.log(`video-engine listening on :${PORT}`);
 });
-
