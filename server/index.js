@@ -1,132 +1,216 @@
 const express = require("express");
 const cors = require("cors");
-const path = require("path");
-const fs = require("fs");
-const { spawn } = require("child_process");
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const fsp = require("node:fs/promises");
+const os = require("node:os");
+const path = require("node:path");
+const { spawn } = require("node:child_process");
+const { Readable } = require("node:stream");
+const { pipeline } = require("node:stream/promises");
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 
-const app = express();
-app.use(cors());
-app.use(express.json({ limit: "10mb" }));
-
 const PORT = process.env.PORT || 3000;
-const TMP = path.join(__dirname, "..", "tmp");
-if (!fs.existsSync(TMP)) fs.mkdirSync(TMP, { recursive: true });
+const BUCKET = process.env.R2_BUCKET || "lion-prime-video";
+const FONT = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf";
 
-const jobs = {};
+// ---------------------------------------------------------------- R2 client
 
-// R2 client
-const R2 = new S3Client({
+const s3 = new S3Client({
   region: "auto",
   endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
   credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID || "",
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || "",
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
   },
 });
-const BUCKET = process.env.R2_BUCKET || "video-engine-output";
 
-function runFFmpeg(args) {
+// ------------------------------------------------------------------- ffmpeg
+
+/** Escape a string for ffmpeg drawtext. */
+function esc(text) {
+  return String(text == null ? "" : text)
+    .replace(/\\/g, "\\\\")
+    .replace(/:/g, "\\:")
+    .replace(/'/g, "\\'")
+    .replace(/%/g, "\\%")
+    .replace(/\r?\n/g, " ");
+}
+
+function runFfmpeg(input, output, o) {
+  const filters = [
+    "scale=1080:1920:force_original_aspect_ratio=increase",
+    "crop=1080:1920",
+  ];
+
+  const overlay = (text, size, y, opacity) => {
+    if (!text) return;
+    filters.push(
+      `drawtext=fontfile=${FONT}:text='${esc(text)}'` +
+        `:fontcolor=white:fontsize=${size}` +
+        `:box=1:boxcolor=black@${opacity}:boxborderw=${Math.round(size / 2.5)}` +
+        `:x=(w-text_w)/2:y=${y}`,
+    );
+  };
+overlay(o.hook, 64, "h*0.12", 0.55);
+  overlay(o.hookSub, 40, "h*0.12+92", 0.45);
+  overlay(o.title, 52, "h*0.45", 0.55);
+  overlay(o.cta, 56, "h*0.78", 0.6);
+  overlay(o.ctaSub, 38, "h*0.78+82", 0.45);
+
+  const seconds = Math.max(1, Math.min(60, Number(o.duration) || 10));
+
+  const args = [
+    "-y",
+    "-i", input,
+    "-vf", filters.join(","),
+    "-t", String(seconds),
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-crf", "23",
+    "-pix_fmt", "yuv420p",
+    "-c:a", "aac",
+    "-b:a", "128k",
+    "-movflags", "+faststart",
+    output,
+  ];
+
   return new Promise((resolve, reject) => {
-    const p = spawn("ffmpeg", args);
+    const proc = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
     let err = "";
-    p.stderr.on("data", (d) => (err += d.toString()));
-    p.on("close", (code) => {
-      if (code === 0) resolve(true);
-      else reject(new Error("ffmpeg failed: " + err.slice(-2000)));
+    proc.stderr.on("data", (d) => {
+      err += d.toString();
+      if (err.length > 8000) err = err.slice(-8000);
     });
+    proc.on("error", reject);
+    proc.on("close", (code) =>
+      code === 0
+        ? resolve()
+        : reject(new Error(`ffmpeg exited ${code}: ${err.slice(-1200)}`)),
+    );
   });
 }
 
-function esc(text) {
-  return String(text || "").replace(/:/g, "\\:").replace(/'/g, "").replace(/"/g, "").slice(0, 80);
+// ------------------------------------------------------------------ helpers
+
+async function download(url, dest) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);
+  await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(dest));
 }
 
-async function doRenderMain(jobId, body) {
-  const startedAt = jobs[jobId].startedAt;
-  try {
-    const { hook = "", hookSub = "", title = "", cta = "", ctaSub = "", videoUrl = "", duration = 30 } = body;
-    if (!videoUrl) {
-      jobs[jobId] = { status: "error", error: "videoUrl is required" };
-      return;
-    }
-
-    const inputPath = path.join(TMP, `in-${jobId}.mp4`);
-    const outputPath = path.join(TMP, `main-${jobId}.mp4`);
-
-    // 1. Download video
-    const res = await fetch(videoUrl);
-    if (!res.ok) throw new Error("Download failed: " + res.status);
-    const buf = Buffer.from(await res.arrayBuffer());
-    fs.writeFileSync(inputPath, buf);
-
-    // 2. FFmpeg: scale to 720x1280, add hook + title + CTA
-    // Use 720x1280 for free plan memory. Change to 1080x1920 later when you upgrade.
-    const font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
-    const hookText = esc(hook);
-    const titleText = esc(title);
-    const ctaText = esc(cta || "Follow for more");
-
-    const filter = [
-      `scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280`,
-      `drawtext=fontfile=${font}:text='${hookText}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=80:box=1:boxcolor=black@0.6:boxborderw=12`,
-      `drawtext=fontfile=${font}:text='${titleText}':fontcolor=yellow:fontsize=36:x=(w-text_w)/2:y=160:box=1:boxcolor=black@0.5:boxborderw=10`,
-      `drawtext=fontfile=${font}:text='${ctaText}':fontcolor=white:fontsize=38:x=(w-text_w)/2:y=h-140:box=1:boxcolor=red@0.8:boxborderw=12`,
-    ].join(",");
-
-    await runFFmpeg([
-      "-y", "-i", inputPath,
-      "-vf", filter,
-      "-t", String(Math.min(Number(duration) || 30, 60)),
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
-      "-c:a", "aac", "-movflags", "+faststart",
-      outputPath,
-    ]);
-
-    // 3. Upload to R2
-    const fileBuffer = fs.readFileSync(outputPath);
-    const key = `videos/main-${jobId}.mp4`;
-    await R2.send(new PutObjectCommand({
+async function upload(file, key) {
+  await s3.send(
+    new PutObjectCommand({
       Bucket: BUCKET,
       Key: key,
-      Body: fileBuffer,
+      Body: fs.createReadStream(file),
       ContentType: "video/mp4",
-    }));
+    }),
+  );
+}
+async function renderJob(job) {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "render-"));
+  const input = path.join(dir, "in.mp4");
+  const output = path.join(dir, "out.mp4");
 
-    const sizeMb = fileBuffer.length / (1024 * 1024);
+  try {
+    await download(job.videoUrl, input);
+    await runFfmpeg(input, output, job);
 
-    // 4. Clean tmp
-    try { fs.unlinkSync(inputPath); fs.unlinkSync(outputPath); } catch {}
+    const key = `renders/${job.jobId}.mp4`;
+    await upload(output, key);
 
-    jobs[jobId] = {
-      status: "done",
-      key: key,
-      bucket: BUCKET,
-      sizeMb: Number(sizeMb.toFixed(2)),
-      renderMs: Date.now() - startedAt,
-    };
-  } catch (e) {
-    console.error("render error:", e);
-    jobs[jobId] = { status: "error", error: e.message };
+    const stat = await fsp.stat(output);
+    return { key, videoUrl: key, bytes: stat.size, duration: job.duration || 10 };
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
-app.post("/render-main", (req, res) => {
-  const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-  jobs[jobId] = { status: "processing", startedAt: Date.now() };
-  res.json({ success: true, jobId, status: "processing", checkUrl: "/job/" + jobId });
-  doRenderMain(jobId, req.body).catch((e) => {
-    jobs[jobId] = { status: "error", error: e.message };
+// --------------------------------------------------------------------- app
+
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: "1mb" }));
+
+app.get("/", (_req, res) => {
+  res.json({
+    service: "video-engine",
+    status: "ok",
+    routes: ["GET /health", "POST /render-main"],
   });
 });
 
-app.get("/job/:id", (req, res) => {
-  const job = jobs[req.params.id];
-  if (!job) return res.status(404).json({ error: "Job not found" });
-  res.json(job);
+app.get("/health", (_req, res) => {
+  res.status(200).json({ ok: true, uptime: process.uptime(), bucket: BUCKET });
 });
 
-app.get("/health", (req, res) => res.json({ ok: true, service: "video-engine" }));
-app.get("/", (req, res) => res.json({ service: "video-engine", status: "ok", engine: "ffmpeg" }));
+app.post("/render-main", async (req, res) => {
+  // Optional shared-secret guard. Off unless RENDER_SHARED_SECRET is set.
+  if (process.env.RENDER_SHARED_SECRET) {
+    if (req.get("x-render-key") !== process.env.RENDER_SHARED_SECRET) {
+      return res.status(401).json({ success: false, error: "unauthorized" });
+    }
+  }
 
-app.listen(PORT, () => console.log(`Video engine running on port ${PORT}`));
+  const body = req.body || {};
+  if (!body.videoUrl) {
+    return res.status(400).json({ success: false, error: "videoUrl is required" });
+  }
+
+  const job = {
+    jobId: body.postId || body.jobId || crypto.randomUUID(),
+    videoUrl: body.videoUrl,
+    duration: body.duration || 10,
+    hook: body.hook || "",
+    hookSub: body.hookSub || "",
+    title: body.title || "",
+    cta: body.cta || "",
+    ctaSub: body.ctaSub || "",
+  };
+
+  // Async mode: reply immediately, POST the result to callbackUrl when done.
+  if (body.callbackUrl) {
+    res.status(202).json({ success: true, accepted: true, jobId: job.jobId });
+
+    renderJob(job)
+      .then(async (result) => {
+        await fetch(body.callbackUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId: job.jobId, success: true, ...result }),
+        }).catch(() => {});
+      })
+      .catch(async (e) => {
+        await fetch(body.callbackUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jobId: job.jobId,
+            success: false,
+            error: String(e.message || e),
+          }),
+        }).catch(() => {});
+      });
+
+    return;
+  }
+
+  // Sync mode: block until the render finishes.
+  try {
+    const result = await renderJob(job);
+    res.json({ success: true, jobId: job.jobId, ...result });
+  } catch (e) {
+    res.status(500).json({ success: false, error: String(e.message || e) });
+  }
+});
+
+app.use((_req, res) => {
+  res.status(404).json({ success: false, error: "not found" });
+});
+
+app.listen(PORT, () => {
+  console.log(`video-engine listening on :${PORT}`);
+});
+
